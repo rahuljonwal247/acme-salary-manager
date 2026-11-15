@@ -2,6 +2,9 @@ import Link from 'next/link';
 import { EmployeeForm } from '@/components/EmployeeForm';
 import { api } from '@/lib/api';
 
+// Reads live reference data from the API on each request (must not be prerendered at build time).
+export const dynamic = 'force-dynamic';
+
 export const metadata = { title: 'Add employee · ACME Salary Manager' };
 
 export default async function NewEmployeePage() {
