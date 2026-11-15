@@ -1,57 +1,99 @@
 import { describe, expect, it } from 'vitest';
+import { assertValidCompensation, grossPay, netPay, payBreakdown, sameCompensation } from './compensation';
 import { ValidationError } from './errors';
 import { assertValidSalaryChange, compaRatio, percentChange, toUsd } from './salary';
+import type { SalaryChangeInput } from './types';
 
+const current = { salary: 100_000, allowances: 5_000, bonus: 10_000, deductions: 8_000 };
 const ctx = {
-  currentSalary: 100_000,
+  current,
   hireDate: new Date('2020-01-01'),
   history: [{ effectiveDate: new Date('2020-01-01') }, { effectiveDate: new Date('2023-04-01') }],
 };
+const change = (o: Partial<SalaryChangeInput>): SalaryChangeInput => ({
+  newSalary: 110_000,
+  allowances: 5_000,
+  bonus: 10_000,
+  deductions: 8_000,
+  effectiveDate: new Date('2024-04-01'),
+  reason: 'ANNUAL_REVIEW',
+  ...o,
+});
+
+describe('compensation maths', () => {
+  it('gross = base + allowances + bonus; net = gross − deductions', () => {
+    expect(grossPay(current)).toBe(115_000);
+    expect(netPay(current)).toBe(107_000);
+  });
+
+  it('payBreakdown converts each figure to USD and rounds', () => {
+    expect(payBreakdown({ salary: 70_000, allowances: 0, bonus: 0, deductions: 7_000 }, 1.08)).toEqual({
+      gross: 70_000,
+      net: 63_000,
+      salaryUsd: 75_600,
+      grossUsd: 75_600,
+      netUsd: 68_040,
+    });
+  });
+
+  it('compares packages field by field', () => {
+    expect(sameCompensation(current, { ...current })).toBe(true);
+    expect(sameCompensation(current, { ...current, bonus: 1 })).toBe(false);
+  });
+
+  it.each([
+    [{ ...current, salary: 0 }, /greater than zero/],
+    [{ ...current, bonus: -1 }, /non-negative/],
+    [{ ...current, allowances: 1.5 }, /whole/],
+    [{ ...current, deductions: 115_001 }, /cannot exceed gross/],
+  ])('rejects an invalid package %#', (pkg, msg) => {
+    expect(() => assertValidCompensation(pkg)).toThrow(msg);
+  });
+
+  it('accepts deductions equal to gross', () => {
+    expect(() => assertValidCompensation({ ...current, deductions: 115_000 })).not.toThrow();
+  });
+});
 
 describe('assertValidSalaryChange', () => {
   it('accepts a dated raise after the latest change', () => {
-    expect(() =>
-      assertValidSalaryChange({ newSalary: 110_000, effectiveDate: new Date('2024-04-01'), reason: 'ANNUAL_REVIEW' }, ctx),
-    ).not.toThrow();
+    expect(() => assertValidSalaryChange(change({}), ctx)).not.toThrow();
+  });
+
+  it('accepts a bonus-only change', () => {
+    expect(() => assertValidSalaryChange(change({ newSalary: 100_000, bonus: 20_000 }), ctx)).not.toThrow();
   });
 
   it('accepts a change effective on the same day as the latest change', () => {
-    expect(() =>
-      assertValidSalaryChange({ newSalary: 105_000, effectiveDate: new Date('2023-04-01'), reason: 'CORRECTION' }, ctx),
-    ).not.toThrow();
+    expect(() => assertValidSalaryChange(change({ effectiveDate: new Date('2023-04-01') }), ctx)).not.toThrow();
   });
 
-  it('rejects a change that does not change the salary', () => {
-    expect(() =>
-      assertValidSalaryChange({ newSalary: 100_000, effectiveDate: new Date('2024-01-01'), reason: 'ANNUAL_REVIEW' }, ctx),
-    ).toThrow(/same as the current salary/);
+  it('rejects a change that changes nothing', () => {
+    expect(() => assertValidSalaryChange(change({ newSalary: 100_000 }), ctx)).toThrow(/Nothing changed/);
   });
 
   it('rejects an effective date before the hire date', () => {
     expect(() =>
-      assertValidSalaryChange(
-        { newSalary: 110_000, effectiveDate: new Date('2019-12-31'), reason: 'CORRECTION' },
-        { ...ctx, history: [] },
-      ),
+      assertValidSalaryChange(change({ effectiveDate: new Date('2019-12-31') }), { ...ctx, history: [] }),
     ).toThrow(/before the hire date/);
   });
 
   it('rejects back-dating before the latest recorded change', () => {
-    expect(() =>
-      assertValidSalaryChange({ newSalary: 110_000, effectiveDate: new Date('2022-01-01'), reason: 'PROMOTION' }, ctx),
-    ).toThrow(/latest recorded change \(2023-04-01\)/);
+    expect(() => assertValidSalaryChange(change({ effectiveDate: new Date('2022-01-01') }), ctx)).toThrow(
+      /latest recorded change \(2023-04-01\)/,
+    );
   });
 
-  it.each(['PROMOTION', 'ANNUAL_REVIEW'] as const)('rejects a decrease recorded as %s', (reason) => {
-    expect(() =>
-      assertValidSalaryChange({ newSalary: 90_000, effectiveDate: new Date('2024-01-01'), reason }, ctx),
-    ).toThrow(ValidationError);
+  it('rejects an invalid package', () => {
+    expect(() => assertValidSalaryChange(change({ deductions: 999_999 }), ctx)).toThrow(/cannot exceed gross/);
   });
 
-  it.each(['CORRECTION', 'MARKET_ADJUSTMENT'] as const)('allows a decrease recorded as %s', (reason) => {
-    expect(() =>
-      assertValidSalaryChange({ newSalary: 90_000, effectiveDate: new Date('2024-01-01'), reason }, ctx),
-    ).not.toThrow();
+  it.each(['PROMOTION', 'ANNUAL_REVIEW'] as const)('rejects a base-pay cut recorded as %s', (reason) => {
+    expect(() => assertValidSalaryChange(change({ newSalary: 90_000, reason }), ctx)).toThrow(ValidationError);
+  });
+
+  it.each(['CORRECTION', 'MARKET_ADJUSTMENT'] as const)('allows a base-pay cut recorded as %s', (reason) => {
+    expect(() => assertValidSalaryChange(change({ newSalary: 90_000, reason }), ctx)).not.toThrow();
   });
 });
 
@@ -62,7 +104,7 @@ describe('percentChange', () => {
     expect(percentChange(100_000, 95_000)).toBe(-5);
   });
 
-  it('returns null when there is no previous salary', () => {
+  it('returns null when there is no previous value', () => {
     expect(percentChange(null, 100_000)).toBeNull();
     expect(percentChange(0, 100_000)).toBeNull();
   });

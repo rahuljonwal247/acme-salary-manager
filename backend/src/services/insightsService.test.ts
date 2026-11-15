@@ -1,23 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { NotFoundError, ValidationError } from '../domain/errors';
-import type { BreakdownRow } from '../repositories/types';
-import { InMemoryCountryRepository, StubInsightsRepository } from '../testing/fakes';
+import { breakdownRow, InMemoryCountryRepository, StubInsightsRepository } from '../testing/fakes';
 import { bandPosition, buildHistogram, InsightsService } from './insightsService';
 
-const row = (key: string, medianUsd: number, extra: Partial<BreakdownRow> = {}): BreakdownRow => ({
-  key,
-  headcount: 10,
-  minUsd: medianUsd - 10,
-  maxUsd: medianUsd + 10,
-  avgUsd: medianUsd,
-  medianUsd,
-  currency: null,
-  minLocal: null,
-  maxLocal: null,
-  avgLocal: null,
-  medianLocal: null,
-  ...extra,
-});
+const row = breakdownRow;
 
 describe('buildHistogram', () => {
   it('fills missing buckets with zero and labels ranges', () => {
@@ -71,9 +57,9 @@ describe('InsightsService', () => {
   });
 
   it('maps the summary row and passes filters through', async () => {
-    repo.summaryRow = { headcount: 3, totalUsd: 300, avgUsd: 100, medianUsd: 90 };
+    repo.summaryRow = { headcount: 3, totalGrossUsd: 330, avgUsd: 100, medianUsd: 90, avgGrossUsd: 110 };
     const summary = await service.summary({ country: 'US' });
-    expect(summary).toEqual({ headcount: 3, totalPayrollUsd: 300, averageUsd: 100, medianUsd: 90 });
+    expect(summary).toEqual({ headcount: 3, totalPayrollUsd: 330, averageUsd: 100, medianUsd: 90, averageGrossUsd: 110 });
     expect(repo.calls[0]).toEqual({ method: 'summary', args: [{ country: 'US' }] });
   });
 
@@ -88,6 +74,15 @@ describe('InsightsService', () => {
     const result = await service.breakdown('department', { country: 'DE' });
     expect(result.map((r) => r.label)).toEqual(['Engineering', 'Sales']);
     expect(repo.calls[0]).toEqual({ method: 'breakdown', args: ['department', { country: 'DE' }] });
+  });
+
+  it('clamps the top-earners limit to 1..50', async () => {
+    await service.topEarners({}, 500);
+    await service.topEarners({ country: 'IN' }, 0);
+    expect(repo.calls.map((c) => c.args)).toEqual([
+      [{}, 50],
+      [{ country: 'IN' }, 1],
+    ]);
   });
 
   it('returns a continuous histogram', async () => {

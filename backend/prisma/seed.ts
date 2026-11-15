@@ -7,10 +7,33 @@
  *   npm run db:seed -- --if-empty   # only seed a fresh database (used on deploy)
  */
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { COUNTRIES } from '../src/domain/reference';
 import { generateEmployees } from '../src/seed/generator';
 
 const BATCH_SIZE = 1_000;
+
+/**
+ * Initial accounts. Passwords come from env in any shared environment; the defaults exist only so a
+ * local checkout works out of the box (they are documented in the README and must be changed).
+ */
+const SEED_USERS = [
+  { email: 'admin@acme.example', name: 'Avery Admin', role: 'ADMIN' as const, env: 'SEED_ADMIN_PASSWORD', fallback: 'Admin@12345' },
+  { email: 'hr@acme.example', name: 'Harper HR', role: 'HR_MANAGER' as const, env: 'SEED_HR_PASSWORD', fallback: 'HrManager@123' },
+];
+
+/** Creates missing seed users. Never overwrites an existing account's password. */
+async function ensureUsers(prisma: PrismaClient) {
+  for (const u of SEED_USERS) {
+    if (await prisma.user.findUnique({ where: { email: u.email } })) continue;
+    const password = process.env[u.env] ?? u.fallback;
+    if (!process.env[u.env]) console.warn(`  ${u.email}: using the default dev password — set ${u.env} outside local dev`);
+    await prisma.user.create({
+      data: { email: u.email, name: u.name, role: u.role, passwordHash: await bcrypt.hash(password, 10) },
+    });
+    console.log(`  created user ${u.email} (${u.role})`);
+  }
+}
 
 async function main() {
   const prisma = new PrismaClient();
@@ -18,6 +41,8 @@ async function main() {
   const started = Date.now();
 
   try {
+    await ensureUsers(prisma);
+
     if (process.argv.includes('--if-empty') && (await prisma.employee.count()) > 0) {
       console.log('Database already has employees; skipping seed (--if-empty).');
       return;
@@ -32,7 +57,7 @@ async function main() {
     }
 
     // RESTART IDENTITY keeps ids aligned with EMP-xxxxx codes for a clean demo dataset.
-    await prisma.$executeRawUnsafe('TRUNCATE TABLE salary_changes, employees RESTART IDENTITY CASCADE');
+    await prisma.$executeRawUnsafe('TRUNCATE TABLE audit_logs, salary_changes, employees RESTART IDENTITY CASCADE');
 
     const employees = generateEmployees({ count });
 

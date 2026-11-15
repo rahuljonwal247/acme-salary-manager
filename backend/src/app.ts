@@ -3,9 +3,9 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { errorHandler, notFoundHandler } from './http/errorHandler';
-import { apiRouter, type RouteDeps } from './http/routes';
+import { apiRouter, type RouteDeps, type RouteOptions } from './http/routes';
 
-export interface AppOptions {
+export interface AppOptions extends RouteOptions {
   corsOrigins?: string[];
   logRequests?: boolean;
 }
@@ -22,7 +22,7 @@ export function createApp(deps: RouteDeps, options: AppOptions = {}): Express {
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
   });
-  app.use('/api', apiRouter(deps));
+  app.use('/api', apiRouter(deps, options));
   app.use(notFoundHandler);
   app.use(errorHandler);
   return app;

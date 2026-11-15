@@ -11,14 +11,52 @@ export interface SeedEmployee {
   countryCode: string;
   hireDate: Date;
   salary: number;
+  allowances: number;
+  bonus: number;
+  deductions: number;
   salaryChanges: SeedSalaryChange[];
 }
 
 export interface SeedSalaryChange {
   previousSalary: number | null;
   newSalary: number;
+  allowances: number;
+  bonus: number;
+  deductions: number;
   effectiveDate: Date;
   reason: SalaryChangeReason;
+}
+
+/** Package composition as rates of base pay, so every history entry is internally consistent. */
+interface PayRates {
+  allowance: number;
+  bonus: number;
+  /** share of gross withheld (pension, benefits) */
+  deduction: number;
+}
+
+function packageFor(base: number, rates: PayRates, usdRate: number) {
+  const allowances = rates.allowance ? roundSalary(base * rates.allowance, usdRate) : 0;
+  const bonus = rates.bonus ? roundSalary(base * rates.bonus, usdRate) : 0;
+  const deductions = roundSalary((base + allowances + bonus) * rates.deduction, usdRate);
+  return { allowances, bonus, deductions };
+}
+
+function payRatesFor(rng: Rng, department: string, jobTitle: string): PayRates {
+  const isManager = /Manager|Lead|Staff|Partner/.test(jobTitle);
+  const bonus =
+    department === 'Sales'
+      ? randomBetween(rng, 0.1, 0.3) // commission-heavy
+      : isManager
+        ? randomBetween(rng, 0.08, 0.18)
+        : rng() < 0.4
+          ? 0
+          : randomBetween(rng, 0.03, 0.1);
+  return {
+    allowance: rng() < 0.2 ? 0 : randomBetween(rng, 0.03, 0.12),
+    bonus,
+    deduction: randomBetween(rng, 0.04, 0.1),
+  };
 }
 
 export interface GenerateOptions {
@@ -64,6 +102,7 @@ function generateHistory(
   hireDate: Date,
   asOf: Date,
   country: CountrySeed,
+  rates: PayRates,
 ): SeedSalaryChange[] {
   const years = Math.floor((asOf.getTime() - hireDate.getTime()) / (365 * DAY_MS));
   const raiseCount = Math.min(years, randomInt(rng, 0, 3));
@@ -81,13 +120,20 @@ function generateHistory(
   // Spread raise dates evenly between hire date and asOf, strictly increasing.
   const span = asOf.getTime() - hireDate.getTime();
   const changes: SeedSalaryChange[] = [
-    { previousSalary: null, newSalary: salaries[0] as number, effectiveDate: hireDate, reason: 'HIRE' },
+    {
+      previousSalary: null,
+      newSalary: salaries[0] as number,
+      ...packageFor(salaries[0] as number, rates, country.usdRate),
+      effectiveDate: hireDate,
+      reason: 'HIRE',
+    },
   ];
   for (let i = 1; i <= raiseCount; i++) {
     const date = toDateOnly(hireDate.getTime() + (span * i) / (raiseCount + 1));
     changes.push({
       previousSalary: salaries[i - 1] as number,
       newSalary: salaries[i] as number,
+      ...packageFor(salaries[i] as number, rates, country.usdRate),
       effectiveDate: date,
       reason: reasons[i - 1] as SalaryChangeReason,
     });
@@ -123,6 +169,7 @@ export function generateEmployees(options: GenerateOptions): SeedEmployee[] {
     usedEmails.set(base, n);
     const email = `${base}${n > 1 ? n : ''}@acme.example`;
 
+    const rates = payRatesFor(rng, dept.name, job.title);
     employees.push({
       employeeCode: formatEmployeeCode(i),
       firstName,
@@ -133,7 +180,8 @@ export function generateEmployees(options: GenerateOptions): SeedEmployee[] {
       countryCode: country.code,
       hireDate,
       salary,
-      salaryChanges: generateHistory(rng, salary, hireDate, asOf, country),
+      ...packageFor(salary, rates, country.usdRate),
+      salaryChanges: generateHistory(rng, salary, hireDate, asOf, country, rates),
     });
   }
   return employees;

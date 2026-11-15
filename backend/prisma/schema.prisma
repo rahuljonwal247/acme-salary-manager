@@ -31,9 +31,14 @@ model Employee {
   countryCode   String         @map("country_code") @db.Char(2)
   country       Country        @relation(fields: [countryCode], references: [code])
   hireDate      DateTime       @map("hire_date") @db.Date
-  /// Current annual base salary in whole units of the country's currency.
+  status        EmployeeStatus @default(ACTIVE)
+  deactivatedAt DateTime?      @map("deactivated_at")
+  /// Current annual compensation in whole units of the country's currency.
   /// Denormalised from the latest SalaryChange; always written in the same transaction.
-  salary        Int
+  salary        Int // base salary
+  allowances    Int            @default(0)
+  bonus         Int            @default(0)
+  deductions    Int            @default(0)
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
   salaryChanges SalaryChange[]
@@ -43,7 +48,13 @@ model Employee {
   @@index([jobTitle])
   @@index([countryCode, jobTitle])
   @@index([lastName, firstName])
+  @@index([status])
   @@map("employees")
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
 }
 
 enum SalaryChangeReason {
@@ -60,10 +71,53 @@ model SalaryChange {
   employee       Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   previousSalary Int?               @map("previous_salary")
   newSalary      Int                @map("new_salary")
+  /// full package after this change (base is newSalary)
+  allowances     Int                @default(0)
+  bonus          Int                @default(0)
+  deductions     Int                @default(0)
   effectiveDate  DateTime           @map("effective_date") @db.Date
   reason         SalaryChangeReason
+  changedById    Int?               @map("changed_by_id")
+  changedBy      User?              @relation(fields: [changedById], references: [id], onDelete: SetNull)
   createdAt      DateTime           @default(now()) @map("created_at")
 
   @@index([employeeId, effectiveDate])
   @@map("salary_changes")
+}
+
+enum Role {
+  ADMIN
+  HR_MANAGER
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  email         String         @unique
+  name          String
+  passwordHash  String         @map("password_hash")
+  role          Role
+  isActive      Boolean        @default(true) @map("is_active")
+  lastLoginAt   DateTime?      @map("last_login_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  salaryChanges SalaryChange[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+/// Append-only record of who changed what. Never updated or deleted by the application.
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?     @map("user_id")
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String   @map("entity_type")
+  entityId   Int?     @map("entity_id")
+  details    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

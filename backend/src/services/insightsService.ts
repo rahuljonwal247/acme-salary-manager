@@ -8,6 +8,7 @@ import type {
   CountryRepository,
   InsightFilter,
   InsightsRepository,
+  TopEarnerRow,
 } from '../repositories/types';
 
 export const DISTRIBUTION_BUCKET_USD = 20_000;
@@ -16,10 +17,15 @@ export const DISTRIBUTION_CAP_USD = 300_000;
 
 export interface Summary {
   headcount: number;
+  /** annual gross pay (base + allowances + bonus) in USD */
   totalPayrollUsd: number;
+  /** base salary */
   averageUsd: number | null;
   medianUsd: number | null;
+  averageGrossUsd: number | null;
 }
+
+export const MAX_TOP_EARNERS = 50;
 
 export interface BreakdownItem extends BreakdownRow {
   label: string;
@@ -80,10 +86,16 @@ export class InsightsService {
     const row = await this.insights.summary(filter);
     return {
       headcount: row.headcount,
-      totalPayrollUsd: row.totalUsd,
+      totalPayrollUsd: row.totalGrossUsd,
       averageUsd: row.avgUsd,
       medianUsd: row.medianUsd,
+      averageGrossUsd: row.avgGrossUsd,
     };
+  }
+
+  /** Highest-paid active employees by gross pay, compared in USD. */
+  async topEarners(filter: InsightFilter, limit = 10): Promise<TopEarnerRow[]> {
+    return this.insights.topEarners(filter, Math.min(Math.max(1, limit), MAX_TOP_EARNERS));
   }
 
   /** Per-group pay statistics, highest median first. */
