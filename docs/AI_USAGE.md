@@ -43,9 +43,28 @@ The useful part of AI-assisted work is the feedback loop. Things the tests or to
 | `/employees/new` was **prerendered at build time** and failed when the API wasn't reachable — would have broken deploys. | `next build` | `export const dynamic = 'force-dynamic'`. |
 | Tailwind v4 can't `@apply` classes declared in `@layer components`. | Page returned 500 in dev | Converted primitives to `@utility`. |
 | Windows PowerShell wrote a UTF-8 BOM into `package.json`. | Byte check after edit | Stripped BOM; used non-BOM writes after that. |
+| **Filters, pagination and sorting silently did nothing in production builds**: the app-wide `loading.tsx` Suspense boundary stopped query-string navigations from ever committing. | Playwright E2E in a real browser (unit tests and the dev server both passed) | Removed the root `loading.tsx`; isolated the cause by building with and without it. |
+| Employee page overflowed phone screens by 47px. | E2E layout check at 390px width | `min-w-0` on grid children. |
+| `create` passed the whole employee record to the compensation validator, which then tried to validate `firstName` as a money amount. | Service unit tests | Pass only the four pay fields. |
+| **Every save failed with "Cross-site request blocked" inside the production container**: the CSRF check compared `Origin` with the server's bind address (`0.0.0.0:3000`). | E2E against the Docker stack | Compare with the `Host`/`X-Forwarded-Host` the browser used; regression tests added. |
+| **Quick successive filter changes dropped earlier filters**, because each change started from `useSearchParams()`, which is stale until the previous navigation commits. | E2E (Germany + Sales + Sales Manager came back as Sales Manager only) | FilterBar keeps the pending query locally; unit test reproduces the race. |
+| The docs claimed Excel exports took "under 1 s". | Measured: 2.7 s for 10k rows | Corrected the docs; noted the streaming-writer option. |
+| A first-draft CSRF E2E test could have *really deactivated* an employee, because browsers ignore a scripted `Origin` header. | Code review of the test | Used Playwright's request API to forge the header deterministically. |
+
+## Phase 2: the full product requirements
+
+The second requirements document added RBAC, compensation components, deactivation, audit logs, exports and
+an AI assistant. The same loop applied: update the requirements doc first, extend the schema with a
+migration, write the domain rules and their tests, then the services and adapters, the HTTP layer with an
+access matrix, and the UI. Then a **second complete test pass**: unit, integration, production build, and
+E2E against the production containers. That pass found the two production-only bugs listed above.
+
+For the assistant, the Claude API reference (model choice, strict tool use, refusal fallbacks) was loaded
+before writing any LLM code. The design deliberately limits the model to *choosing* among vetted, validated
+queries, so it can never produce a number that didn't come from the database.
 
 ## What I kept for human judgement
-* Scope: what's in v1 and — more importantly — what's out (auth, payroll, import, relocations).
+* Scope: what's in and — more importantly — what's out (payroll/tax, self-service, approvals, relocations, SSO).
 * Data-model choices: currency belongs to the country, money as integers, denormalised current salary.
 * Business rules: e.g. a pay *decrease* cannot be recorded as a promotion or annual review.
 * What "done" means: deterministic tests, measured performance, a container that runs end to end.

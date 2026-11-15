@@ -1,95 +1,108 @@
 # ACME Salary Manager
 
-A web app for ACME's HR manager to manage salaries for **10,000 employees across 8 countries** and answer
-"how do we pay people?" questions, replacing a set of spreadsheets.
+A secure web platform for ACME's HR team to manage compensation for **10,000 employees across 8 countries**
+and to answer "how do we pay people?" questions, including in plain English. It replaces a set of spreadsheets.
 
 | | |
 |---|---|
-| **Backend** | Node 20 · TypeScript · Express 5 · Prisma 6 · PostgreSQL 16 · zod |
-| **Frontend** | Next.js 15 (App Router, Server Components) · React 19 · Tailwind CSS 4 · Recharts |
-| **Tests** | Vitest · Supertest · Testing Library: 81 backend unit + 10 integration + 24 frontend |
+| **Backend** | Node 20 · TypeScript · Express 5 · Prisma 6 · PostgreSQL 16 · zod · JWT/bcrypt · exceljs · Anthropic SDK |
+| **Frontend** | Next.js 15 (App Router, Server Components, server actions) · React 19 · Tailwind CSS 4 · Recharts |
+| **Tests** | 155 backend unit/HTTP + 12 Postgres integration + 41 frontend unit + 29 Playwright end-to-end |
 
-📄 **Start here:** [Requirements](docs/REQUIREMENTS.md) · [Design & trade-offs](docs/DESIGN.md) · [How AI was used](docs/AI_USAGE.md)
+📄 **Start here:** [Requirements](docs/REQUIREMENTS.md) · [Design, security & trade-offs](docs/DESIGN.md) ·
+[How AI was used](docs/AI_USAGE.md) · [Demo script](docs/DEMO_SCRIPT.md)
 
-## What the HR manager can do
+## Features
 
-* **Find anyone fast**: a directory with search (name, email, code), filters by country, department and job
-  title, and sorting. Filters live in the URL, so a view can be shared.
-* **Maintain records**: add, edit and delete employees, with validation on both client and server.
-* **Change pay safely**: every salary change has an effective date and a reason, and the history is kept.
-  Rules block mistakes such as back-dating or recording a pay cut as a "promotion".
-* **See pay in context**: each employee page shows where they sit in the pay band for their role and country
-  (min / P25 / median / P75 / max, compa-ratio).
-* **Understand the org**: headcount, payroll, median and average pay, a breakdown by country, department or
-  job title, and a salary histogram. Everything is normalised to USD, with local currency shown where it applies.
+| | |
+|---|---|
+| **Sign-in & roles** | HR Managers handle employees, pay, the dashboard, reports and the assistant. Administrators can do all of that and also manage users and roles and view the audit log. The session lives in an httpOnly cookie, and disabling an account takes effect immediately. |
+| **Employees** | Server-side search, filters (country, department, designation, status), sorting and pagination over 10k people. Create, edit, **deactivate and reactivate** them. |
+| **Compensation** | Base salary, allowances, bonus and deductions in the local currency, with **gross and net** computed live. Every change is dated, has a reason and records who made it; the rules block back-dating and "promotions" that cut pay. |
+| **Dashboard** | Headcount, total payroll (gross, USD), and average and median salary. A median ↔ payroll breakdown by country, department or title, a salary distribution, and the highest-paid employees. |
+| **AI assistant** | Ask questions like *"Which department has the highest average salary?"* and get an answer plus the verified result table and chart. Claude only picks among vetted database queries, so every number comes from SQL. It works offline with a built-in query parser when no API key is set. |
+| **Reports** | Employee, salary-history, department and country reports in **CSV or Excel**, filtered, with formula-injection protection. |
+| **Audit** | Every change to employees, pay and users is written in the same transaction as the change. The audit log page is admin-only, and each employee page shows its own activity trail. |
 
 ## Run it locally
 
-Prerequisites: Node 20+, Docker.
+Prerequisites: Node 20+ and Docker.
 
+**Everything in containers (simplest):**
 ```bash
-# 1. Database
-docker compose up -d db
+docker compose --profile app up --build      # http://localhost:3000
+```
+On first start the API migrates the database and seeds the users and 10,000 employees (deterministically).
 
-# 2. API  (http://localhost:4000)
-cd backend
-cp .env.example .env
-npm install
-npx prisma migrate deploy
-npm run db:seed          # 10,000 employees in ~4s (deterministic)
-npm run dev
+**Or run the processes for development:**
+```bash
+docker compose up -d db                      # Postgres on :5434
 
-# 3. Web  (http://localhost:3000), in a second terminal
-cd frontend
-echo NEXT_PUBLIC_API_URL=http://localhost:4000 > .env.local
-npm install
-npm run dev
+cd backend && cp .env.example .env && npm install
+npx prisma migrate deploy && npm run db:seed && npm run dev      # API on :4000
+
+cd ../frontend && npm install
+echo API_URL=http://localhost:4000 > .env.local && npm run dev  # web on :3000
 ```
 
-**Or everything in containers:** `docker compose --profile app up --build`. This migrates the database, seeds it
-if it's empty, and serves the web app on http://localhost:3000.
+### Sign in (local seed accounts)
+
+| Role | Email | Password |
+|---|---|---|
+| Administrator | `admin@acme.example` | `Admin@12345` |
+| HR Manager | `hr@acme.example` | `HrManager@123` |
+
+These defaults exist **only for local development**. Any shared environment sets `SEED_ADMIN_PASSWORD`
+and `SEED_HR_PASSWORD` (the Render blueprint generates both), and the seed never overwrites an existing account.
+
+### Enable the Claude-powered assistant (optional)
+Set `ANTHROPIC_API_KEY` for the API, for example `ANTHROPIC_API_KEY=sk-ant-... docker compose --profile app up`.
+Without a key the assistant uses the offline query engine, and the UI shows which engine answered.
 
 ## Tests
 
 ```bash
 cd backend
-npm test                  # unit + HTTP tests (no DB), ~1s
-npm run test:coverage     # 98.7% line coverage
-npm run test:integration  # Prisma/SQL tests against Postgres (isolated schema)
+npm test                   # 155 unit + HTTP tests, ~4s, no database
+npm run test:integration   # 12 tests against Postgres (isolated schema)
 
 cd ../frontend
-npm test                  # component + util tests, ~2s
+npm test                   # 41 component/unit tests
+npm run test:e2e           # 29 browser tests against the running stack (Edge/Chrome)
 ```
-
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs typecheck, lint, all test suites and the
-production build.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs typecheck, lint, all suites, the production
+build, and the E2E suite against the Docker stack.
 
 ## Deploy
 
-[render.yaml](render.yaml) is a Render Blueprint that creates Postgres, the API and the web app. The API's
-start command runs migrations, seeds 10k employees on an empty database, and then starts the server. Any
-Docker host also works with the two Dockerfiles.
+[render.yaml](render.yaml) is a Render Blueprint that creates Postgres, the API and the web app, with a
+generated `JWT_SECRET` and generated seed passwords (shown in the Render dashboard). The API's start command
+migrates the database, seeds it if empty, and starts the server.
 
 | Variable | Service | Purpose |
 |---|---|---|
 | `DATABASE_URL` | api | Postgres connection string |
-| `CORS_ORIGINS` | api | comma-separated allowed web origins |
-| `NEXT_PUBLIC_API_URL` | web (build time) | public API URL used by the browser |
-| `API_URL` | web (optional) | internal API URL for server-side fetches |
+| `JWT_SECRET` | api | ≥ 32 random chars; **required in production** |
+| `ANTHROPIC_API_KEY` | api | optional; enables the Claude assistant (`ASSISTANT_MODEL`, default `claude-opus-5-5`) |
+| `SEED_ADMIN_PASSWORD`, `SEED_HR_PASSWORD` | api | initial account passwords |
+| `CORS_ORIGINS` | api | allowed browser origins (the web app proxies, so normally just the web URL) |
+| `API_URL` | web | where the web server reaches the API (server-side only) |
+| `COOKIE_SECURE=false` | web | only for plain-HTTP demos on a LAN |
 
 ## Repository layout
 
 ```
 backend/
-  prisma/            schema, migrations, seed script
-  src/domain/        reference data, business rules (pure)
-  src/services/      use cases: EmployeeService, InsightsService
-  src/repositories/  ports (interfaces) + Prisma adapters (incl. SQL aggregates)
-  src/http/          zod schemas, routes, error mapping
-  src/seed/          deterministic 10k-employee generator
+  prisma/              schema, migrations, seed (users + 10k employees)
+  src/domain/          reference data, pay maths & rules (pure)
+  src/services/        employees, insights, auth/users, reports
+  src/assistant/       vetted analytics catalogue, Claude tool loop, offline parser
+  src/repositories/    ports + Prisma adapters (SQL aggregates, audit-in-transaction)
+  src/http/            auth middleware, zod schemas, routes, error mapping
 frontend/
-  src/app/           pages: / (insights), /employees, /employees/[id], /employees/new
-  src/components/    table, filters, forms, benchmark band, charts
-  src/lib/           API client, formatting, URL helpers
-docs/                requirements, design, AI usage
+  src/app/             dashboard, employees, assistant, reports, admin, login, /bff proxy
+  src/components/      tables, filters, forms, charts, assistant, admin
+  src/lib/             API clients (browser/server), formatting, session helpers
+  e2e/                 Playwright suites per role
+docs/                  requirements, design, AI usage, demo script
 ```

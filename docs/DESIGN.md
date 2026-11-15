@@ -5,148 +5,178 @@
 ```mermaid
 flowchart LR
   subgraph Browser
-    UI[Next.js App Router<br/>Tailwind UI]
+    UI[Next.js pages<br/>Tailwind UI]
   end
-  subgraph "Next.js server"
-    RSC[Server Components<br/>fetch data per request]
+  subgraph "Next.js server (web)"
+    RSC[Server Components<br/>read data per request]
+    BFF["/bff proxy<br/>cookie → Bearer"]
+    ACT[Login server action<br/>sets httpOnly cookie]
   end
   subgraph "API (Express + TypeScript)"
-    R[Routes<br/>zod validation] --> S[Services<br/>business rules]
-    S --> REPO[Repositories<br/>Prisma + raw SQL aggregates]
+    AUTH[requireAuth / requireRole] --> R[Routes<br/>zod validation]
+    R --> S[Services<br/>business rules]
+    S --> REPO[Repositories<br/>Prisma + SQL aggregates]
+    S --> AS[Assistant<br/>vetted analytics]
   end
   DB[(PostgreSQL)]
-  UI -- "mutations (fetch)" --> R
-  RSC -- "reads (fetch)" --> R
+  LLM[[Claude API<br/>optional]]
+  UI -- "mutations, downloads" --> BFF
+  UI -- "sign in" --> ACT
+  RSC --> AUTH
+  BFF --> AUTH
+  ACT --> AUTH
   REPO --> DB
+  AS -. "choose a query (tool use)" .-> LLM
 ```
 
-* **Two deployables** — `backend/` (REST API) and `frontend/` (Next.js). The API is the single owner of
-  business rules; the UI never talks to the DB. This keeps the API reusable (e.g. a future Excel importer
-  or BI tool) and lets each side be tested and scaled independently.
-* **Backend layering**
-  * `routes/` — HTTP only: parse + validate input with zod, call a service, map errors to status codes.
-  * `services/` — business logic (salary change rules, USD conversion, shaping insight results). Depends
-    on repository **interfaces**, so unit tests inject in-memory fakes: fast, deterministic, no DB.
-  * `repositories/` — Prisma for CRUD; `$queryRaw` for aggregates where Postgres does the heavy lifting.
-* **Frontend** — list/detail/insight pages are Server Components that read filters from the URL
-  (`?country=DE&page=2`) — shareable links and working back button for free. Forms are small Client
-  Components that call the API and `router.refresh()`.
+* **Two deployables.** `backend/` is the REST API and the single owner of business rules and permissions.
+  `frontend/` is the Next.js app. The browser never talks to the API directly.
+* **Backend layering.** Routes do HTTP and validation, services hold the business rules, and repositories
+  handle persistence. Services depend on repository **interfaces**, so the unit tests use in-memory fakes
+  and need no database.
+* **Frontend.** Pages are Server Components that read filters from the URL, which makes links shareable
+  and keeps the back button working. Forms are small Client Components that call the `/bff` proxy and then
+  `router.refresh()`.
+
+## Security model
+
+| Concern | Decision |
+|---|---|
+| Authentication | Email + password; bcrypt (cost 10); a JWT is signed with `JWT_SECRET` (≥ 32 chars, and the API refuses to start in production without it), valid for 8 hours. Every failure returns the same "Invalid email or password", and a dummy bcrypt compare equalises timing so attackers can't tell which emails exist. |
+| Token storage | The JWT lives in an **httpOnly, SameSite=Lax, Secure** cookie set by a server action. Browser JavaScript can't read it, so XSS can't steal it. The `/bff` proxy turns the cookie into a `Bearer` header. |
+| CSRF | SameSite=Lax, plus the proxy rejects mutating requests whose `Origin` doesn't match the `Host` the browser used. *(Found in E2E: comparing with the server's own URL broke every save inside Docker.)* |
+| Authorisation | Roles `HR_MANAGER` and `ADMIN`, enforced **in the API** on every route (`requireRole`). On each request the API re-reads the user from the DB, so disabling an account or changing a role takes effect on the user's very next request. Admins cannot disable or demote themselves. |
+| Brute force | Login is rate-limited per **IP + email** (10 attempts / 15 min). Keying by IP alone would throttle everyone, because the web server proxies all logins from one address. |
+| Audit | Every employee, pay and user mutation writes an `audit_logs` row **in the same transaction** as the change. Salary history also records `changedBy`. Password resets are logged as `passwordReset: true` and never with the value. |
+| Input | zod validation at the API boundary; Prisma/parameterised SQL only. The single raw SQL fragment (the GROUP BY column) comes from an allow-list. |
+| Exports | Text cells that start with `= + - @` are prefixed with `'`, which stops CSV/Excel formula injection. |
+| Open redirects | The post-login `next` parameter only accepts same-site paths. |
 
 ## Data model
 
 ```mermaid
 erDiagram
-  Employee ||--o{ SalaryChange : has
   Country  ||--o{ Employee : "works in"
-  Country {
-    string code PK "ISO-3166 alpha-2"
-    string name
-    string currency "ISO-4217"
-    decimal usdRate "1 unit local = usdRate USD"
-  }
+  Employee ||--o{ SalaryChange : has
+  User     ||--o{ SalaryChange : "changed by"
+  User     ||--o{ AuditLog : "performed"
+  Country { string code PK; string currency; decimal usdRate }
   Employee {
     int id PK
     string employeeCode UK
-    string firstName
-    string lastName
     string email UK
     string jobTitle
     string department
     string countryCode FK
     date hireDate
-    int salary "current annual base, local currency"
+    enum status "ACTIVE | INACTIVE"
+    int salary "base, local currency"
+    int allowances
+    int bonus
+    int deductions
   }
   SalaryChange {
-    int id PK
     int employeeId FK
-    int previousSalary "null for first entry"
+    int previousSalary
     int newSalary
+    int allowances
+    int bonus
+    int deductions
     date effectiveDate
-    string reason "HIRE | PROMOTION | ANNUAL_REVIEW | MARKET_ADJUSTMENT | CORRECTION"
-    datetime createdAt
+    enum reason
+    int changedById FK
   }
+  User { int id PK; string email UK; string passwordHash; enum role; bool isActive }
+  AuditLog { int userId FK; string action; string entityType; int entityId; json details; datetime createdAt }
 ```
 
-Key decisions
-* **Current salary is denormalised onto `Employee`.** Every insight query aggregates *current* pay; reading
-  it from the latest history row would need a window function per query. The service updates
-  `Employee.salary` and inserts a `SalaryChange` **in one transaction**, so they cannot drift.
-* **Currency belongs to the country**, not the employee row — prevents "German employee paid in INR" bugs
-  and makes conversion a simple join.
-* **Integers for money.** Annual base salaries are whole currency units; no floating point is persisted.
-  USD figures are computed at query time and rounded for display only.
-* **Indexes:** `(countryCode)`, `(department)`, `(jobTitle)`, `(countryCode, jobTitle)`, `(lastName, firstName)`
-  and `(salaryChange.employeeId, effectiveDate)` — matching the filters and benchmarks the UI exposes.
+* **Money is stored as integers** in whole local-currency units. **Gross = base + allowances + bonus**, and
+  **net = gross − deductions**. Both are computed values and never stored, so they can't drift. The USD
+  figures use the country's stored budget rate.
+* **The current package is denormalised onto `Employee`**, so analytics don't need a "latest row" window
+  function. Each change updates the employee and inserts a history row and an audit row in one
+  transaction, with **optimistic concurrency** (`UPDATE … WHERE <package> = <package we validated>`).
+* **Deactivate instead of delete.** The history is a record HR must keep, and analytics include only
+  `ACTIVE` employees.
+* **Currency belongs to the country.** Country is therefore not editable through PATCH, because a relocation
+  is a pay event (see the requirements doc).
 
-## API
+## API (all under `/api`; everything except login needs a Bearer token)
 
-| Method | Path | Notes |
+| Area | Endpoints | Role |
 |---|---|---|
-| GET | `/api/employees?search=&country=&department=&jobTitle=&sort=&order=&page=&pageSize=` | paginated, max pageSize 100 |
-| GET | `/api/employees/:id` | includes salary history + country |
-| POST | `/api/employees` | creates employee **and** an initial `HIRE` salary change |
-| PATCH | `/api/employees/:id` | profile fields only — salary is changed via the endpoint below |
-| DELETE | `/api/employees/:id` | cascades history |
-| POST | `/api/employees/:id/salary-changes` | `{ newSalary, effectiveDate, reason }` |
-| GET | `/api/meta` | countries, departments, job titles (for filter dropdowns) |
-| GET | `/api/insights/summary?country=&department=` | headcount, payroll USD, avg/median USD |
-| GET | `/api/insights/breakdown?by=country\|department\|jobTitle&country=&department=` | per-group stats |
-| GET | `/api/insights/distribution?country=&department=` | USD histogram buckets |
-| GET | `/api/insights/benchmark?country=&jobTitle=` | min/p25/median/p75/max in local currency |
+| Auth | `POST /auth/login`, `GET /auth/me` | public / any |
+| Employees | `GET/POST /employees`, `GET/PATCH /employees/:id`, `POST /employees/:id/deactivate`, `/reactivate`, `POST /employees/:id/salary-changes`, `GET /employees/:id/audit` | HR, Admin |
+| Insights | `GET /insights/summary`, `/breakdown?by=`, `/distribution`, `/top-earners`, `/benchmark` | HR, Admin |
+| Assistant | `POST /assistant/ask` | HR, Admin |
+| Reports | `GET /reports/:type?format=csv\|xlsx&…filters` with type = `employees`, `salary-history`, `departments`, `countries` | HR, Admin |
+| Admin | `GET/POST /users`, `PATCH /users/:id`, `GET /audit-logs` | Admin |
 
-Salary is intentionally **not** editable through `PATCH`: forcing changes through a dedicated endpoint
-guarantees every change has a date and a reason.
+## AI salary assistant
+
+The requirement was natural-language answers **using validated database analytics**. The design keeps the
+model away from the numbers:
+
+1. A catalogue of **five vetted analytics queries** (summary, breakdown by country/department/title with a
+   metric, top earners, pay band, distribution). These are the same SQL-backed services the dashboard uses.
+2. Each query is exposed to Claude as a **strict tool** whose parameters are enums: real country codes,
+   departments, job titles and metrics. The model can only *choose and parameterise* a query. It cannot
+   write SQL or invent a filter.
+3. The API re-validates every tool call with zod before running it. An invalid call goes back to the model
+   as an `is_error` tool result and is never executed.
+4. The response contains the model's short explanation **plus the raw result tables**, and the UI renders
+   those as tables and charts. The system prompt requires every number to come from a tool result, and the
+   user can check each one against the table shown.
+5. **Model:** `claude-opus-5-5` (configurable via `ASSISTANT_MODEL`), effort `medium`, with server-side refusal
+   fallbacks enabled. The loop is capped at 4 tool rounds.
+6. **No API key, or an LLM error → the deterministic rule-based parser** maps common question shapes onto the
+   same catalogue. The feature therefore always works and is fully unit-testable offline. The Claude path is
+   tested with a scripted fake client.
 
 ## Trade-offs
 
 | Decision | Alternative | Why this way |
 |---|---|---|
-| Separate Express API + Next.js | Next.js API routes only | Role asks for Express; a clean API boundary is easier to test and reuse. Cost: two deployables + CORS. |
-| SQL aggregation (`percentile_cont`) | Load rows into Node and compute | 10k rows is small today, but aggregation in the DB scales and avoids shipping data over the wire. Cost: aggregate SQL is covered by integration tests rather than unit tests. |
-| Offset pagination | Keyset/cursor pagination | Users jump to "page 37" and sort by many columns; offset on 10k rows is cheap. Keyset would matter at 1M+. |
-| Static FX table | Live FX API | Reproducible reports, no external dependency. Rates editable in DB. |
-| Strings for department / job title | Lookup tables | Fewer joins and simpler forms; values validated against an allow-list in the API. Would normalise when HR needs to rename titles in bulk. |
-| No auth | Basic auth / SSO | Out of scope (see requirements); top of the production-hardening list. |
-
-## Frontend choices
-* **Tailwind CSS + a handful of in-repo primitives** (`card`, `btn-*`, `input`, `Field`) instead of a heavy
-  component library: the UI needs tables, forms, selects and charts — not worth 300 kB of widgets. Primitives
-  live in `globals.css` as Tailwind `@utility` classes so styling stays consistent.
-* **Recharts** for the two charts. Both are single-series (one hue, no legend), bars ≤ 24 px with rounded data
-  ends, per-bar hover tooltips, and every chart has a table view with the exact numbers.
-* **No client data-fetching library.** Reads happen in Server Components; mutations call the API and
-  `router.refresh()` re-renders the server tree. Fewer moving parts, no cache invalidation bugs.
+| Separate Express API + Next.js BFF | Next.js API routes only | Clear boundary; the API is reusable (importer, BI). Cost: two deployables. |
+| JWT in httpOnly cookie via BFF | Token in localStorage | Immune to token theft through XSS; no CORS exposure. Cost: a proxy hop. |
+| Stateless JWT + DB re-check per request | Server sessions table | Revocation is immediate while auth stays simple. Cost: one indexed PK lookup per request. |
+| LLM picks from vetted queries | Text-to-SQL | No injection risk and no hallucinated numbers, and the results are testable. Cost: questions outside the catalogue are declined. |
+| SQL aggregation (`percentile_cont`) | Compute in Node | Scales without moving 10k rows into Node; covered by integration tests. |
+| Offset pagination | Keyset | Users jump to arbitrary pages; offset over 10k rows is cheap. |
+| Static FX table | Live FX feed | Reproducible reports, no external dependency. |
+| Deactivate | Hard delete | Keeps the pay history and the audit trail. |
 
 ## Testing strategy
-| Layer | Tool | What it proves | Speed |
+
+| Layer | Tool | What it proves | Count |
 |---|---|---|---|
-| Domain + services | Vitest, in-memory fake repos | business rules (salary change rules, compa-ratio, histogram shaping, validation of dept/title, email uniqueness) | ~50 ms |
-| HTTP | Supertest on the real Express app wired with fakes | validation, status codes, error format, PATCH can't change salary | ~250 ms |
-| Seed generator | Vitest | determinism, uniqueness, history consistency for 2,000 generated employees | ~300 ms |
-| Repositories (SQL) | Vitest against Postgres in an isolated `integration_test` schema | percentile/aggregate SQL, cross-currency USD maths, optimistic concurrency, unique violations | ~1 s |
-| Frontend | Vitest + Testing Library (jsdom, TZ pinned) | formatting, URL helpers, forms (dept-scoped titles, client validation, API error display), band placement | ~2 s |
+| Domain + services | Vitest, in-memory fakes | pay maths and rules, concurrency, audit-in-transaction contract, RBAC lock-out rules, password policy, exports (CSV escaping, formula injection, xlsx round-trip) | 155 total backend unit/HTTP tests |
+| Assistant | Vitest + scripted LLM client | parser mapping, vetted-query validation, tool loop, invalid-call handling, LLM-failure fallback | (included above) |
+| HTTP | Supertest on the real Express app | 401/403 matrix, validation, rate limiting, downloads, immediate lock-out | (included above) |
+| SQL | Vitest against Postgres (isolated schema) | percentiles, gross payroll in USD, active-only filters, top earners, atomic audit, stale-write rejection | 12 |
+| Frontend units | Vitest + Testing Library | forms, pay preview, filters, assistant chat, audit descriptions, origin check, safe redirects | 41 |
+| End-to-end | Playwright in a real browser against the production containers | sign-in/out, redirects, httpOnly cookie, CSRF, each role's journeys, exports, assistant, admin, phone layouts | 29 |
 
-Unit suites need no database and no network, so they are deterministic and run on every save.
-Backend unit coverage: **98.7 % lines** (Prisma adapters are covered by the integration suite instead).
+## Performance
 
-## Performance considerations
-* All list and insight queries are bounded: pagination (max 100 rows) or `GROUP BY` results (≤ ~50 groups).
-* Filter columns are indexed; search uses `ILIKE` on a handful of columns — fine at 10k rows
-  (sequential scan on 10k rows is ~ms). At 1M rows we'd add a `pg_trgm` GIN index.
-* Seed inserts with `createMany` in batches of 1,000 rows: 10k employees + ~25k history rows in seconds.
-* Server Components fetch on the server, so the browser receives HTML, not JSON + a waterfall of requests.
-* Salary changes use **optimistic concurrency** (`UPDATE … WHERE salary = <value we validated>`), so two HR
-  users editing the same person can't silently overwrite each other.
-
-**Measured** (10,000 employees, ~23,600 history rows, local Docker Postgres, avg of 5 requests):
+Measured on 10,000 employees and ~23.5k history rows (Docker Postgres on a laptop; authenticated requests, average of 5):
 
 | Endpoint | Avg |
 |---|---|
-| `GET /employees?pageSize=100&sort=salary` | 17 ms |
-| `GET /employees?search=sharma&country=IN` | 19 ms |
-| `GET /employees?page=399` (deep offset) | 22 ms |
-| `GET /insights/summary` | 13 ms |
-| `GET /insights/breakdown?by=jobTitle` | 30 ms |
-| `GET /insights/distribution` | 12 ms |
-| `GET /insights/benchmark` | 8 ms |
-| Seeding 10k employees + history | ~4 s |
+| `GET /employees?pageSize=100&sort=salary` | 32 ms |
+| `GET /employees?search=sharma&country=IN` | 29 ms |
+| `GET /insights/summary` | 24 ms |
+| `GET /insights/breakdown?by=jobTitle` | 44 ms |
+| `GET /insights/top-earners` | 20 ms |
+| `POST /assistant/ask` (offline engine) | 39 ms |
+| `GET /reports/employees?format=csv` (10k rows) | 0.75 s |
+| `GET /reports/employees?format=xlsx` (10k rows) | 2.7 s |
+| Seed 10k employees + history | ~7 s |
+
+The auth re-check (one primary-key lookup) adds roughly 10 ms per request compared with the unauthenticated v1.
+The Excel export is the slowest operation; it's a deliberate, infrequent download. If it becomes a problem,
+exceljs's streaming `WorkbookWriter` and a background job are the next steps.
+
+* Every list and insight is bounded by pagination or `GROUP BY`, and the filter columns (including `status`)
+  are indexed. Everything interactive stays well inside the 300 ms target.
+* At 1M rows, the next steps would be a `pg_trgm` index for search, keyset pagination, and streaming exports.

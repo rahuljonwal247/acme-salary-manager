@@ -1,5 +1,6 @@
 # Render Blueprint: New > Blueprint > select this repo. Creates Postgres + API + web.
-# After the first deploy, set NEXT_PUBLIC_API_URL / CORS_ORIGINS to the real service URLs if they differ.
+# Secrets marked `generateValue` are created by Render; read the seed passwords in the dashboard
+# (api service > Environment) to sign in the first time, then change them in the app.
 databases:
   - name: acme-salaries-db
     plan: free
@@ -13,24 +14,39 @@ services:
     rootDir: backend
     plan: free
     buildCommand: npm ci && npm run build
-    # migrate -> seed 10k employees if empty -> start
+    # migrate -> create seed users + 10k employees if empty -> start
     startCommand: npm run start:prod
     healthCheckPath: /health
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: DATABASE_URL
         fromDatabase:
           name: acme-salaries-db
           property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SEED_ADMIN_PASSWORD
+        generateValue: true
+      - key: SEED_HR_PASSWORD
+        generateValue: true
       - key: CORS_ORIGINS
         value: https://acme-salary-web.onrender.com
+      # optional — set in the dashboard to enable the Claude-powered assistant
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   - type: web
     name: acme-salary-web
     runtime: node
     rootDir: frontend
     plan: free
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    # the standalone server needs the static assets copied next to it
+    buildCommand: npm ci && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    startCommand: HOSTNAME=0.0.0.0 node .next/standalone/server.js
     envVars:
-      - key: NEXT_PUBLIC_API_URL
+      - key: NODE_ENV
+        value: production
+      # server-side only: pages and the /bff proxy call the API; the browser never does
+      - key: API_URL
         value: https://acme-salary-api.onrender.com
