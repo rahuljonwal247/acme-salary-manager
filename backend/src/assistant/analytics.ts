@@ -144,7 +144,7 @@ export class AnalyticsExecutor {
           query,
           title: `${METRIC_LABEL[query.metric]} by ${dim.toLowerCase()} ${describeFilter(query.filter, countries)}`,
           summary: top
-            ? `${query.order === 'desc' ? 'Highest' : 'Lowest'} ${METRIC_LABEL[query.metric].toLowerCase()}: ${top.label} at ${fmt(
+            ? `${query.order === 'desc' ? 'Highest' : 'Lowest'} ${METRIC_LABEL[query.metric].replace(' (USD)', '').replace(/^\w/, (ch) => ch.toLowerCase())}: ${top.label} at ${fmt(
                 value(top),
               )}${limited.length > 1 ? `; ${limited.length} groups shown` : ''}.`
             : 'No matching employees.',

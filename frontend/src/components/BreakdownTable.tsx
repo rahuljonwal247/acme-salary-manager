@@ -11,8 +11,9 @@ export function BreakdownTable({ rows, dimensionLabel }: { rows: BreakdownItem[]
           <tr>
             <th scope="col" className="px-4 py-2 text-left font-medium">{dimensionLabel}</th>
             <th scope="col" className="px-4 py-2 text-right font-medium">Headcount</th>
+            <th scope="col" className="px-4 py-2 text-right font-medium">Payroll (gross)</th>
             <th scope="col" className="px-4 py-2 text-right font-medium">Min</th>
-            <th scope="col" className="px-4 py-2 text-right font-medium">Median</th>
+            <th scope="col" className="px-4 py-2 text-right font-medium">Median base</th>
             <th scope="col" className="px-4 py-2 text-right font-medium">Average</th>
             <th scope="col" className="px-4 py-2 text-right font-medium">Max</th>
             {showLocal && <th scope="col" className="px-4 py-2 text-right font-medium">Median (local)</th>}
@@ -23,6 +24,7 @@ export function BreakdownTable({ rows, dimensionLabel }: { rows: BreakdownItem[]
             <tr key={r.key}>
               <th scope="row" className="px-4 py-2 text-left font-sans font-normal text-slate-900">{r.label}</th>
               <td className="px-4 py-2 text-right text-slate-700">{formatNumber(r.headcount)}</td>
+              <td className="px-4 py-2 text-right text-slate-700">{formatUsd(r.totalGrossUsd, true)}</td>
               <td className="px-4 py-2 text-right text-slate-700">{formatUsd(r.minUsd)}</td>
               <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatUsd(r.medianUsd)}</td>
               <td className="px-4 py-2 text-right text-slate-700">{formatUsd(r.avgUsd)}</td>

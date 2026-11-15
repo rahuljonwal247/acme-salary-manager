@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { EmployeeForm } from '@/components/EmployeeForm';
-import { api } from '@/lib/api';
+import { serverApi as api } from '@/lib/server-api';
 
 // Reads live reference data from the API on each request (must not be prerendered at build time).
 export const dynamic = 'force-dynamic';

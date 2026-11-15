@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { EmployeeTable } from '@/components/EmployeeTable';
 import { FilterBar } from '@/components/FilterBar';
 import { Pagination } from '@/components/Pagination';
-import { api } from '@/lib/api';
+import { serverApi as api } from '@/lib/server-api';
 import { first } from '@/lib/query';
 
 export const metadata = { title: 'Employees · ACME Salary Manager' };
@@ -17,6 +17,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Se
     country: first(sp.country),
     department,
     jobTitle: first(sp.jobTitle),
+    status: first(sp.status),
     sort: first(sp.sort) ?? 'name',
     order: first(sp.order) === 'desc' ? 'desc' : 'asc',
     page: first(sp.page),
@@ -65,6 +66,15 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Se
               label: 'Job title',
               allLabel: 'All job titles',
               options: titles.map((t) => ({ value: t, label: t })),
+            },
+            {
+              name: 'status',
+              label: 'Status',
+              allLabel: 'Active',
+              options: [
+                { value: 'INACTIVE', label: 'Inactive' },
+                { value: 'ALL', label: 'All' },
+              ],
             },
           ]}
         />

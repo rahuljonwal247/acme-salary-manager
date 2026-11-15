@@ -10,17 +10,25 @@ export function SalaryHistory({ changes, currency }: { changes: SalaryChange[]; 
           <tr>
             <th scope="col" className="px-5 py-2 text-left font-medium">Effective</th>
             <th scope="col" className="px-5 py-2 text-left font-medium">Reason</th>
-            <th scope="col" className="px-5 py-2 text-right font-medium">Salary</th>
+            <th scope="col" className="px-5 py-2 text-right font-medium">Base</th>
+            <th scope="col" className="px-5 py-2 text-right font-medium">Gross</th>
             <th scope="col" className="px-5 py-2 text-right font-medium">Change</th>
+            <th scope="col" className="px-5 py-2 text-left font-medium">By</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {changes.map((c) => (
             <tr key={c.id}>
               <td className="px-5 py-2.5 whitespace-nowrap text-slate-700">{formatDate(c.effectiveDate)}</td>
-              <td className="px-5 py-2.5 text-slate-700">{reasonLabel(c.reason)}</td>
-              <td className="px-5 py-2.5 text-right font-mono tabular-nums text-slate-900">
+              <td className="px-5 py-2.5 whitespace-nowrap text-slate-700">{reasonLabel(c.reason)}</td>
+              <td className="px-5 py-2.5 text-right font-mono tabular-nums whitespace-nowrap text-slate-900">
                 {formatMoney(c.newSalary, currency)}
+              </td>
+              <td
+                className="px-5 py-2.5 text-right font-mono tabular-nums whitespace-nowrap text-slate-700"
+                title={`Allowances ${formatMoney(c.allowances, currency)} · Bonus ${formatMoney(c.bonus, currency)} · Deductions ${formatMoney(c.deductions, currency)}`}
+              >
+                {formatMoney(c.gross, currency)}
               </td>
               <td
                 className={`px-5 py-2.5 text-right font-mono tabular-nums ${
@@ -29,6 +37,7 @@ export function SalaryHistory({ changes, currency }: { changes: SalaryChange[]; 
               >
                 {formatPercent(c.changePercent)}
               </td>
+              <td className="px-5 py-2.5 whitespace-nowrap text-slate-500">{c.changedBy?.name ?? 'Import'}</td>
             </tr>
           ))}
         </tbody>

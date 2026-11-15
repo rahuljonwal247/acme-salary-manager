@@ -23,6 +23,10 @@ services:
     environment:
       DATABASE_URL: postgresql://acme:acme@db:5432/salaries?schema=public
       CORS_ORIGINS: http://localhost:3000
+      # local demo only — use a long random secret anywhere else
+      JWT_SECRET: local-docker-demo-secret-change-me-0123456789
+      # optional: enables the Claude-powered assistant
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "4000:4000"
     depends_on:
@@ -31,12 +35,10 @@ services:
 
   web:
     profiles: [app]
-    build:
-      context: ./frontend
-      args:
-        NEXT_PUBLIC_API_URL: http://localhost:4000
+    build: ./frontend
     environment:
-      # server components talk to the API over the compose network
+      # the web server (pages + /bff proxy) talks to the API over the compose network;
+      # the browser never calls the API directly
       API_URL: http://api:4000
     ports:
       - "3000:3000"

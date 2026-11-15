@@ -23,4 +23,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
+  projects: [
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    { name: 'auth', testMatch: /auth\.spec\.ts/ }, // starts signed out
+    { name: 'hr', testMatch: /app\.spec\.ts/, dependencies: ['setup'], use: { storageState: 'e2e/.auth/hr.json' } },
+    { name: 'admin', testMatch: /admin\.spec\.ts/, dependencies: ['setup', 'hr'], use: { storageState: 'e2e/.auth/admin.json' } },
+  ],
 });

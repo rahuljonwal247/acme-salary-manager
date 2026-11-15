@@ -3,8 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { formatMoney, formatPercent, reasonLabel } from '@/lib/format';
+import { formatPercent, reasonLabel } from '@/lib/format';
 import type { Employee, Meta } from '@/lib/types';
+import { CompensationFields, computePay, validateCompensation, type CompensationValues } from './CompensationFields';
 import { Field } from './Field';
 
 interface Props {
@@ -20,32 +21,51 @@ export function previewChange(current: number, next: number): number | null {
   return Math.round(((next - current) / current) * 1000) / 10;
 }
 
+/** Record a new pay package. Pre-filled with the current package so HR edits only what changes. */
 export function SalaryChangeForm({ employee, reasons, onDone, today = new Date().toISOString().slice(0, 10) }: Props) {
   const router = useRouter();
-  const [newSalary, setNewSalary] = useState('');
+  const [pay, setPay] = useState<CompensationValues>({
+    salary: String(employee.salary),
+    allowances: String(employee.allowances),
+    bonus: String(employee.bonus),
+    deductions: String(employee.deductions),
+  });
   const [effectiveDate, setEffectiveDate] = useState(today);
   const [reason, setReason] = useState<string>(reasons[0] ?? 'ANNUAL_REVIEW');
+  const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const currency = employee.country.currency;
-  const pct = newSalary ? previewChange(employee.salary, Number(newSalary)) : null;
+  const next = computePay(pay);
+  const pct = next ? previewChange(employee.gross, next.gross) : null;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const n = Number(newSalary);
-    if (!Number.isInteger(n) || n <= 0) {
-      setError('Enter the new annual salary as a whole number');
+    const clientErrors = validateCompensation(pay);
+    if (Object.keys(clientErrors).length) {
+      setErrors(clientErrors);
+      setError(Object.values(clientErrors)[0]?.[0] ?? 'Check the amounts');
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await api.recordSalaryChange(employee.id, { newSalary: n, effectiveDate, reason });
+      await api.recordSalaryChange(employee.id, {
+        newSalary: Number(pay.salary),
+        allowances: Number(pay.allowances),
+        bonus: Number(pay.bonus),
+        deductions: Number(pay.deductions),
+        effectiveDate,
+        reason,
+      });
       onDone();
       router.refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unexpected error — please try again');
+      if (err instanceof ApiError) {
+        setError(err.message);
+        setErrors(err.fieldErrors);
+      } else setError('Unexpected error — please try again');
     } finally {
       setSaving(false);
     }
@@ -58,32 +78,20 @@ export function SalaryChangeForm({ employee, reasons, onDone, today = new Date()
           {error}
         </div>
       )}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field
-          id="newSalary"
-          label={`New annual salary (${currency})`}
-          hint={`Current: ${formatMoney(employee.salary, currency)}`}
-        >
-          <input
-            id="newSalary"
-            type="number"
-            inputMode="numeric"
-            min={1}
-            step={1}
-            className="input"
-            value={newSalary}
-            onChange={(e) => setNewSalary(e.target.value)}
-            autoFocus
-          />
-        </Field>
+      <CompensationFields
+        values={pay}
+        currency={currency}
+        errors={errors}
+        salaryId="newSalary"
+        salaryLabel="New base salary"
+        onChange={(k, v) => {
+          setPay((p) => ({ ...p, [k]: v }));
+          setErrors({});
+        }}
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field id="effectiveDate" label="Effective date">
-          <input
-            id="effectiveDate"
-            type="date"
-            className="input"
-            value={effectiveDate}
-            onChange={(e) => setEffectiveDate(e.target.value)}
-          />
+          <input id="effectiveDate" type="date" className="input" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
         </Field>
         <Field id="reason" label="Reason">
           <select id="reason" className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
@@ -95,11 +103,11 @@ export function SalaryChangeForm({ employee, reasons, onDone, today = new Date()
           </select>
         </Field>
       </div>
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-slate-600" aria-live="polite">
-          {pct !== null && (
+          {pct !== null && pct !== 0 && (
             <>
-              Change:{' '}
+              Gross pay change:{' '}
               <strong className={pct >= 0 ? 'text-emerald-700' : 'text-red-700'} data-testid="change-preview">
                 {formatPercent(pct)}
               </strong>

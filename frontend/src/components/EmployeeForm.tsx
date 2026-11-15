@@ -5,11 +5,12 @@ import { useState } from 'react';
 import { api, ApiError, type EmployeeInput } from '@/lib/api';
 import { toDateInput } from '@/lib/format';
 import type { Employee, Meta } from '@/lib/types';
+import { CompensationFields, EMPTY_COMPENSATION, validateCompensation, type CompensationValues } from './CompensationFields';
 import { Field } from './Field';
 
 interface Props {
   meta: Meta;
-  /** when provided the form edits this employee's profile (salary & country are not editable here) */
+  /** when provided the form edits this employee's profile (pay & country are not editable here) */
   employee?: Employee;
   onDone?: () => void;
 }
@@ -17,16 +18,13 @@ interface Props {
 type Errors = Record<string, string[]>;
 
 /** Client-side checks mirror the API's so users get instant feedback; the API remains the authority. */
-export function validateEmployee(values: Record<string, string>, isEdit: boolean): Errors {
+export function validateEmployee(values: Record<string, string>, isEdit: boolean, pay?: CompensationValues): Errors {
   const errors: Errors = {};
   const required = ['firstName', 'lastName', 'email', 'department', 'jobTitle', 'hireDate'];
-  if (!isEdit) required.push('countryCode', 'salary');
+  if (!isEdit) required.push('countryCode');
   for (const f of required) if (!values[f]?.trim()) errors[f] = ['Required'];
   if (values.email && !/^\S+@\S+\.\S+$/.test(values.email)) errors.email = ['Invalid email address'];
-  if (!isEdit && values.salary) {
-    const n = Number(values.salary);
-    if (!Number.isInteger(n) || n <= 0) errors.salary = ['Enter a whole number greater than zero'];
-  }
+  if (!isEdit && pay) Object.assign(errors, validateCompensation(pay));
   return errors;
 }
 
@@ -41,8 +39,8 @@ export function EmployeeForm({ meta, employee, onDone }: Props) {
     jobTitle: employee?.jobTitle ?? '',
     countryCode: employee?.countryCode ?? '',
     hireDate: employee ? toDateInput(employee.hireDate) : '',
-    salary: '',
   });
+  const [pay, setPay] = useState<CompensationValues>(EMPTY_COMPENSATION);
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -66,7 +64,7 @@ export function EmployeeForm({ meta, employee, onDone }: Props) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
-    const clientErrors = validateEmployee(values, isEdit);
+    const clientErrors = validateEmployee(values, isEdit, pay);
     if (Object.keys(clientErrors).length) {
       setErrors(clientErrors);
       return;
@@ -86,7 +84,14 @@ export function EmployeeForm({ meta, employee, onDone }: Props) {
         onDone?.();
         router.refresh();
       } else {
-        const input: EmployeeInput = { ...common, countryCode: values.countryCode!, salary: Number(values.salary) };
+        const input: EmployeeInput = {
+          ...common,
+          countryCode: values.countryCode!,
+          salary: Number(pay.salary),
+          allowances: Number(pay.allowances),
+          bonus: Number(pay.bonus),
+          deductions: Number(pay.deductions),
+        };
         const created = await api.createEmployee(input);
         router.push(`/employees/${created.id}`);
       }
@@ -149,7 +154,12 @@ export function EmployeeForm({ meta, employee, onDone }: Props) {
             ))}
           </select>
         </Field>
-        <Field id="jobTitle" label="Job title" error={errors.jobTitle} hint={!values.department ? 'Choose a department first' : undefined}>
+        <Field
+          id="jobTitle"
+          label="Job title"
+          error={errors.jobTitle}
+          hint={!values.department ? 'Choose a department first' : undefined}
+        >
           <select
             id="jobTitle"
             className="input"
@@ -165,34 +175,36 @@ export function EmployeeForm({ meta, employee, onDone }: Props) {
           </select>
         </Field>
         {!isEdit && (
-          <>
-            <Field id="countryCode" label="Country" error={errors.countryCode} hint="Determines the pay currency">
-              <select
-                id="countryCode"
-                className="input"
-                value={values.countryCode}
-                onChange={(e) => set('countryCode', e.target.value)}
-                aria-invalid={!!errors.countryCode?.length}
-              >
-                <option value="">Select country…</option>
-                {meta.countries.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.name} ({c.currency})
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field
-              id="salary"
-              label={`Annual base salary${currency ? ` (${currency})` : ''}`}
-              error={errors.salary}
-              hint="Whole units of local currency"
+          <Field id="countryCode" label="Country" error={errors.countryCode} hint="Determines the pay currency">
+            <select
+              id="countryCode"
+              className="input"
+              value={values.countryCode}
+              onChange={(e) => set('countryCode', e.target.value)}
+              aria-invalid={!!errors.countryCode?.length}
             >
-              {input('salary', { type: 'number', inputMode: 'numeric', min: 1, step: 1 })}
-            </Field>
-          </>
+              <option value="">Select country…</option>
+              {meta.countries.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name} ({c.currency})
+                </option>
+              ))}
+            </select>
+          </Field>
         )}
       </div>
+      {!isEdit && (
+        <CompensationFields
+          values={pay}
+          currency={currency}
+          errors={errors}
+          onChange={(k, v) => {
+            setPay((p) => ({ ...p, [k]: v }));
+            setErrors((e) => ({ ...e, [k]: [] }));
+          }}
+          salaryHint="Whole units of local currency, per year"
+        />
+      )}
       <div className="flex justify-end gap-2">
         {onDone && (
           <button type="button" className="btn-secondary" onClick={onDone}>

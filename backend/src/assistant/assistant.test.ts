@@ -64,7 +64,7 @@ describe('AnalyticsExecutor', () => {
       ['Engineering', 140_000],
       ['Sales', 90_000],
     ]);
-    expect(r.summary).toBe('Highest average base salary (usd): Engineering at $140,000; 2 groups shown.');
+    expect(r.summary).toBe('Highest average base salary: Engineering at $140,000; 2 groups shown.');
     expect(r.chart).toBeDefined();
   });
 

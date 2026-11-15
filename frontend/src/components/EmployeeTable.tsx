@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { formatDate, formatMoney, formatUsd } from '@/lib/format';
 import { withParams, type Params } from '@/lib/query';
 import type { EmployeeListItem } from '@/lib/types';
+import { StatusBadge } from './StatusBadge';
 
 interface Props {
   employees: EmployeeListItem[];
@@ -36,11 +37,7 @@ function SortHeader({ field, label, params, sort, order, align = 'left' }: {
 
 export function EmployeeTable({ employees, params, sort, order }: Props) {
   if (employees.length === 0) {
-    return (
-      <div className="card p-10 text-center text-sm text-slate-500">
-        No employees match these filters.
-      </div>
-    );
+    return <div className="card p-10 text-center text-sm text-slate-500">No employees match these filters.</div>;
   }
   const h = { params, sort, order };
   return (
@@ -52,8 +49,9 @@ export function EmployeeTable({ employees, params, sort, order }: Props) {
             <th scope="col" className="px-4 py-3 text-left font-medium">Role</th>
             <th scope="col" className="px-4 py-3 text-left font-medium">Country</th>
             <SortHeader field="hireDate" label="Hired" {...h} />
-            <SortHeader field="salary" label="Salary" align="right" {...h} />
-            <th scope="col" className="px-4 py-3 text-right font-medium">≈ USD</th>
+            <SortHeader field="salary" label="Base salary" align="right" {...h} />
+            <th scope="col" className="px-4 py-3 text-right font-medium">Gross pay</th>
+            <th scope="col" className="px-4 py-3 text-right font-medium">≈ USD gross</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -63,6 +61,7 @@ export function EmployeeTable({ employees, params, sort, order }: Props) {
                 <Link href={`/employees/${e.id}`} className="font-medium text-slate-900 hover:text-blue-700">
                   {e.firstName} {e.lastName}
                 </Link>
+                {e.status === 'INACTIVE' && <StatusBadge status={e.status} className="ml-2" />}
                 <div className="text-xs text-slate-500">
                   {e.employeeCode} · {e.email}
                 </div>
@@ -76,8 +75,11 @@ export function EmployeeTable({ employees, params, sort, order }: Props) {
               <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap text-slate-900">
                 {formatMoney(e.salary, e.country.currency)}
               </td>
+              <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap text-slate-700">
+                {formatMoney(e.gross, e.country.currency)}
+              </td>
               <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap text-slate-500">
-                {formatUsd(e.salaryUsd)}
+                {formatUsd(e.grossUsd)}
               </td>
             </tr>
           ))}

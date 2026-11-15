@@ -1,10 +1,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { ActivityList } from '@/components/ActivityList';
 import { BenchmarkCard } from '@/components/BenchmarkCard';
 import { EmployeeActions } from '@/components/EmployeeActions';
+import { PayBreakdown } from '@/components/PayBreakdown';
 import { SalaryHistory } from '@/components/SalaryHistory';
-import { api, ApiError } from '@/lib/api';
+import { StatusBadge } from '@/components/StatusBadge';
+import { ApiError } from '@/lib/api-core';
 import { formatDate, formatMoney, formatUsd } from '@/lib/format';
+import { serverApi as api } from '@/lib/server-api';
 
 export default async function EmployeePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -18,9 +22,10 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
   }
-  const [meta, benchmark] = await Promise.all([
+  const [meta, benchmark, activity] = await Promise.all([
     api.meta(),
     api.benchmark(employee.countryCode, employee.jobTitle, employee.salary),
+    api.employeeAudit(employee.id),
   ]);
   const currency = employee.country.currency;
 
@@ -32,28 +37,38 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">
+          <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold text-slate-900">
             {employee.firstName} {employee.lastName}
+            <StatusBadge status={employee.status} />
           </h1>
           <p className="text-sm text-slate-500">
             {employee.jobTitle} · {employee.department} · {employee.country.name}
           </p>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-semibold tabular-nums text-slate-900">{formatMoney(employee.salary, currency)}</div>
+          <div className="text-3xl font-semibold tabular-nums text-slate-900">{formatMoney(employee.gross, currency)}</div>
           <div className="text-sm text-slate-500">
-            annual base{currency !== 'USD' && <> · ≈ {formatUsd(employee.salaryUsd)}</>}
+            gross per year{currency !== 'USD' && <> · ≈ {formatUsd(employee.grossUsd)}</>}
           </div>
         </div>
       </div>
+
+      {employee.status === 'INACTIVE' && (
+        <p role="status" className="rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-700">
+          Deactivated{employee.deactivatedAt ? ` on ${formatDate(employee.deactivatedAt)}` : ''}. Excluded from analytics;
+          reactivate to change pay.
+        </p>
+      )}
 
       <EmployeeActions employee={employee} meta={meta} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
           <SalaryHistory changes={employee.salaryChanges} currency={currency} />
+          <ActivityList entries={activity.items} />
         </div>
         <div className="min-w-0 space-y-6">
+          <PayBreakdown employee={employee} />
           <BenchmarkCard benchmark={benchmark} />
           <div className="card p-5">
             <h2 className="mb-3 font-semibold text-slate-900">Details</h2>
