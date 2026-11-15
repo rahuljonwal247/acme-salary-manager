@@ -50,10 +50,10 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
       <EmployeeActions employee={employee} meta={meta} />
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+        <div className="min-w-0 space-y-6 lg:col-span-2">
           <SalaryHistory changes={employee.salaryChanges} currency={currency} />
         </div>
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <BenchmarkCard benchmark={benchmark} />
           <div className="card p-5">
             <h2 className="mb-3 font-semibold text-slate-900">Details</h2>
@@ -65,8 +65,10 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                 ['Pay currency', currency],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4">
-                  <dt className="text-slate-500">{k}</dt>
-                  <dd className="truncate text-right text-slate-900">{v}</dd>
+                  <dt className="shrink-0 text-slate-500">{k}</dt>
+                  <dd className="min-w-0 truncate text-right text-slate-900" title={v}>
+                    {v}
+                  </dd>
                 </div>
               ))}
             </dl>

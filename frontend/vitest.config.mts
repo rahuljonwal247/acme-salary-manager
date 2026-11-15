@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
+    exclude: ['e2e/**', 'node_modules/**'],
     setupFiles: ['./vitest.setup.ts'],
     // Pin the timezone so date formatting is deterministic on any machine.
     env: { TZ: 'UTC' },
