@@ -1,103 +1,126 @@
-import Image from "next/image";
+import Link from 'next/link';
+import { BreakdownTable } from '@/components/BreakdownTable';
+import { BreakdownChart } from '@/components/charts/BreakdownChart';
+import { DistributionChart } from '@/components/charts/DistributionChart';
+import { FilterBar } from '@/components/FilterBar';
+import { api } from '@/lib/api';
+import { formatNumber, formatUsd } from '@/lib/format';
+import { first, withParams } from '@/lib/query';
+import type { BreakdownDimension } from '@/lib/types';
 
-export default function Home() {
+const DIMENSIONS: { value: BreakdownDimension; label: string }[] = [
+  { value: 'country', label: 'Country' },
+  { value: 'department', label: 'Department' },
+  { value: 'jobTitle', label: 'Job title' },
+];
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="card p-5">
+      <div className="text-sm text-slate-500">{label}</div>
+      <div className="mt-1 text-3xl font-semibold tabular-nums text-slate-900">{value}</div>
+      {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}
+    </div>
+  );
+}
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+export default async function InsightsPage({ searchParams }: { searchParams: SearchParams }) {
+  const sp = await searchParams;
+  const filter = { country: first(sp.country), department: first(sp.department) };
+  const requested = first(sp.by);
+  const by: BreakdownDimension = DIMENSIONS.some((d) => d.value === requested)
+    ? (requested as BreakdownDimension)
+    : 'country';
+  const dimLabel = DIMENSIONS.find((d) => d.value === by)!.label;
+
+  const [meta, summary, breakdown, distribution] = await Promise.all([
+    api.meta(),
+    api.summary(filter),
+    api.breakdown(by, filter),
+    api.distribution(filter),
+  ]);
+
+  const scope = [
+    filter.country && meta.countries.find((c) => c.code === filter.country)?.name,
+    filter.department,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-slate-900">How ACME pays people</h1>
+        <p className="text-sm text-slate-500">
+          {scope || 'Whole organisation'} · annual base salary, converted to USD at budget FX rates for comparison
+        </p>
+      </div>
+
+      <div className="card p-4">
+        <FilterBar
+          selects={[
+            {
+              name: 'country',
+              label: 'Country',
+              allLabel: 'All countries',
+              options: meta.countries.map((c) => ({ value: c.code, label: c.name })),
+            },
+            {
+              name: 'department',
+              label: 'Department',
+              allLabel: 'All departments',
+              options: meta.departments.map((d) => ({ value: d.name, label: d.name })),
+            },
+          ]}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Kpi label="Headcount" value={formatNumber(summary.headcount)} />
+        <Kpi label="Annual payroll" value={formatUsd(summary.totalPayrollUsd, true)} hint="base salary, USD" />
+        <Kpi label="Median salary" value={formatUsd(summary.medianUsd)} hint="half earn more, half less" />
+        <Kpi label="Average salary" value={formatUsd(summary.averageUsd)} hint="pulled up by high earners" />
+      </div>
+
+      {summary.headcount === 0 ? (
+        <div className="card p-10 text-center text-sm text-slate-500">No employees match these filters.</div>
+      ) : (
+        <>
+          <section className="card">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
+              <h2 className="font-semibold text-slate-900">Median salary by {dimLabel.toLowerCase()} (USD)</h2>
+              <nav className="flex gap-1 rounded-lg bg-slate-100 p-1" aria-label="Group by">
+                {DIMENSIONS.map((d) => (
+                  <Link
+                    key={d.value}
+                    href={`/${withParams({ ...filter, by }, { by: d.value })}`}
+                    aria-current={d.value === by ? 'true' : undefined}
+                    className={`rounded-md px-3 py-1 text-sm ${
+                      d.value === by ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {d.label}
+                  </Link>
+                ))}
+              </nav>
+            </div>
+            <div className="p-5">
+              <BreakdownChart rows={breakdown} />
+            </div>
+            <div className="border-t border-slate-200">
+              <BreakdownTable rows={breakdown} dimensionLabel={dimLabel} />
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <h2 className="font-semibold text-slate-900">Salary distribution (USD)</h2>
+            <p className="mb-4 text-xs text-slate-500">Employees per $20K band of annual base salary</p>
+            <DistributionChart buckets={distribution} />
+          </section>
+        </>
+      )}
     </div>
   );
 }
