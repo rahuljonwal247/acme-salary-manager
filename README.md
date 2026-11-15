@@ -88,6 +88,7 @@ migrates the database, seeds it if empty, and starts the server.
 | `CORS_ORIGINS` | api | allowed browser origins (the web app proxies, so normally just the web URL) |
 | `API_URL` | web | where the web server reaches the API (server-side only) |
 | `COOKIE_SECURE=false` | web | only for plain-HTTP demos on a LAN |
+| `SEED_RESET_PASSWORDS=true` | api | **one-time account recovery**: on the next start, sets the seed accounts' passwords to the `SEED_*_PASSWORD` values. Remove it afterwards. |
 
 ## Repository layout
 

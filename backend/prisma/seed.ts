@@ -22,10 +22,37 @@ const SEED_USERS = [
   { email: 'hr@acme.example', name: 'Harper HR', role: 'HR_MANAGER' as const, env: 'SEED_HR_PASSWORD', fallback: 'HrManager@123' },
 ];
 
-/** Creates missing seed users. Never overwrites an existing account's password. */
+/**
+ * Creates missing seed users. Never overwrites an existing account's password — unless the operator
+ * explicitly sets SEED_RESET_PASSWORDS=true (account recovery when no admin can sign in). The reset uses
+ * the SEED_*_PASSWORD env values, re-enables the account, and is recorded in the audit log.
+ */
 async function ensureUsers(prisma: PrismaClient) {
+  const reset = process.env.SEED_RESET_PASSWORDS === 'true';
   for (const u of SEED_USERS) {
-    if (await prisma.user.findUnique({ where: { email: u.email } })) continue;
+    const existing = await prisma.user.findUnique({ where: { email: u.email } });
+    if (existing) {
+      const password = process.env[u.env];
+      if (reset && password) {
+        await prisma.$transaction([
+          prisma.user.update({
+            where: { id: existing.id },
+            data: { passwordHash: await bcrypt.hash(password, 10), isActive: true },
+          }),
+          prisma.auditLog.create({
+            data: {
+              userId: null,
+              action: 'USER_UPDATED',
+              entityType: 'USER',
+              entityId: existing.id,
+              details: { passwordReset: true, isActive: true, via: 'SEED_RESET_PASSWORDS' },
+            },
+          }),
+        ]);
+        console.warn(`  reset password for ${u.email} from ${u.env} (remove SEED_RESET_PASSWORDS now)`);
+      }
+      continue;
+    }
     const password = process.env[u.env] ?? u.fallback;
     if (!process.env[u.env]) console.warn(`  ${u.email}: using the default dev password — set ${u.env} outside local dev`);
     await prisma.user.create({
