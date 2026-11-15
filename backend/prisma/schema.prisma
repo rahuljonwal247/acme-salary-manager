@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Reference data: one row per country we employ people in.
+/// Currency is a property of the country, so an employee's pay currency can never be inconsistent.
+model Country {
+  code      String     @id @db.Char(2) // ISO-3166 alpha-2
+  name      String
+  currency  String     @db.Char(3) // ISO-4217
+  /// Value of ONE unit of local currency in USD (budget rate, updated by finance).
+  usdRate   Decimal    @map("usd_rate") @db.Decimal(14, 8)
+  employees Employee[]
+
+  @@map("countries")
+}
+
+model Employee {
+  id            Int            @id @default(autoincrement())
+  employeeCode  String         @unique @map("employee_code")
+  firstName     String         @map("first_name")
+  lastName      String         @map("last_name")
+  email         String         @unique
+  jobTitle      String         @map("job_title")
+  department    String
+  countryCode   String         @map("country_code") @db.Char(2)
+  country       Country        @relation(fields: [countryCode], references: [code])
+  hireDate      DateTime       @map("hire_date") @db.Date
+  /// Current annual base salary in whole units of the country's currency.
+  /// Denormalised from the latest SalaryChange; always written in the same transaction.
+  salary        Int
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  salaryChanges SalaryChange[]
+
+  @@index([countryCode])
+  @@index([department])
+  @@index([jobTitle])
+  @@index([countryCode, jobTitle])
+  @@index([lastName, firstName])
+  @@map("employees")
+}
+
+enum SalaryChangeReason {
+  HIRE
+  PROMOTION
+  ANNUAL_REVIEW
+  MARKET_ADJUSTMENT
+  CORRECTION
+}
+
+model SalaryChange {
+  id             Int                @id @default(autoincrement())
+  employeeId     Int                @map("employee_id")
+  employee       Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  previousSalary Int?               @map("previous_salary")
+  newSalary      Int                @map("new_salary")
+  effectiveDate  DateTime           @map("effective_date") @db.Date
+  reason         SalaryChangeReason
+  createdAt      DateTime           @default(now()) @map("created_at")
+
+  @@index([employeeId, effectiveDate])
+  @@map("salary_changes")
+}
