@@ -15,7 +15,8 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "start:prod": "prisma migrate deploy && tsx prisma/seed.ts --if-empty && node dist/server.js"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

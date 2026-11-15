@@ -1,0 +1,36 @@
+# Render Blueprint: New > Blueprint > select this repo. Creates Postgres + API + web.
+# After the first deploy, set NEXT_PUBLIC_API_URL / CORS_ORIGINS to the real service URLs if they differ.
+databases:
+  - name: acme-salaries-db
+    plan: free
+    databaseName: salaries
+    user: acme
+
+services:
+  - type: web
+    name: acme-salary-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm ci && npm run build
+    # migrate -> seed 10k employees if empty -> start
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: acme-salaries-db
+          property: connectionString
+      - key: CORS_ORIGINS
+        value: https://acme-salary-web.onrender.com
+
+  - type: web
+    name: acme-salary-web
+    runtime: node
+    rootDir: frontend
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://acme-salary-api.onrender.com

@@ -4,6 +4,7 @@
  *
  *   npm run db:seed                 # 10,000 employees
  *   SEED_COUNT=500 npm run db:seed  # smaller dataset
+ *   npm run db:seed -- --if-empty   # only seed a fresh database (used on deploy)
  */
 import { PrismaClient } from '@prisma/client';
 import { COUNTRIES } from '../src/domain/reference';
@@ -17,6 +18,11 @@ async function main() {
   const started = Date.now();
 
   try {
+    if (process.argv.includes('--if-empty') && (await prisma.employee.count()) > 0) {
+      console.log('Database already has employees; skipping seed (--if-empty).');
+      return;
+    }
+
     for (const c of COUNTRIES) {
       await prisma.country.upsert({
         where: { code: c.code },
