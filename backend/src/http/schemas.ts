@@ -1,0 +1,125 @@
+import { z } from 'zod';
+import { ValidationError } from '../domain/errors';
+import { DEPARTMENT_NAMES, JOB_TITLES, SALARY_CHANGE_REASONS } from '../domain/reference';
+import { EMPLOYEE_SORT_FIELDS } from '../domain/types';
+import { BREAKDOWN_DIMENSIONS } from '../repositories/types';
+
+/** Turns "" (empty form field / query param) into undefined so optional filters behave. */
+const optional = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === '' || v === null ? undefined : v), schema.optional());
+
+const department = z.enum(DEPARTMENT_NAMES as [string, ...string[]], {
+  errorMap: () => ({ message: 'Unknown department' }),
+});
+const jobTitle = z.enum(JOB_TITLES as [string, ...string[]], {
+  errorMap: () => ({ message: 'Unknown job title' }),
+});
+const countryCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{2}$/, 'Country must be a 2-letter ISO code');
+
+/** "YYYY-MM-DD" -> Date at UTC midnight; rejects impossible dates like 2024-02-31. */
+export const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
+  .transform((s, ctx) => {
+    const d = new Date(`${s}T00:00:00.000Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid calendar date' });
+      return z.NEVER;
+    }
+    return d;
+  });
+
+/** Annual salary in whole units of local currency. Upper bound fits Postgres int4. */
+const salary = z
+  .number({ invalid_type_error: 'Salary must be a number' })
+  .int('Salary must be a whole number')
+  .positive('Salary must be greater than zero')
+  .max(2_000_000_000, 'Salary is unrealistically large');
+
+const name = z.string().trim().min(1, 'Required').max(100);
+
+// Zod still runs refinements after a failed transform, so guard against a non-Date value.
+const hireDate = dateOnly.superRefine((d, ctx) => {
+  if (!(d instanceof Date)) return;
+  if (d.getUTCFullYear() < 1950) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Hire date is too far in the past' });
+  } else if (d.getTime() > Date.now() + 365 * 86_400_000) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Hire date cannot be more than a year in the future' });
+  }
+});
+
+export const employeeListQuerySchema = z.object({
+  search: optional(z.string().trim().max(100)),
+  country: optional(countryCode),
+  department: optional(department),
+  jobTitle: optional(jobTitle),
+  sort: optional(z.enum(EMPLOYEE_SORT_FIELDS)).transform((v) => v ?? 'name'),
+  order: optional(z.enum(['asc', 'desc'])).transform((v) => v ?? 'asc'),
+  page: optional(z.coerce.number().int().min(1)).transform((v) => v ?? 1),
+  pageSize: optional(z.coerce.number().int().min(1).max(100)).transform((v) => v ?? 25),
+});
+
+export const createEmployeeSchema = z.object({
+  firstName: name,
+  lastName: name,
+  email: z.string().trim().email('Invalid email address').max(200),
+  jobTitle,
+  department,
+  countryCode,
+  hireDate,
+  salary,
+});
+
+export const updateEmployeeSchema = z
+  .object({
+    firstName: name,
+    lastName: name,
+    email: z.string().trim().email('Invalid email address').max(200),
+    jobTitle,
+    department,
+    hireDate,
+  })
+  .partial()
+  .strict('Salary and country cannot be edited here — record a salary change instead')
+  .refine((o) => Object.keys(o).length > 0, 'Provide at least one field to update');
+
+export const salaryChangeSchema = z.object({
+  newSalary: salary,
+  effectiveDate: dateOnly,
+  // HIRE is recorded automatically on creation and cannot be submitted.
+  reason: z.enum(['PROMOTION', 'ANNUAL_REVIEW', 'MARKET_ADJUSTMENT', 'CORRECTION'], {
+    errorMap: () => ({ message: `Reason must be one of ${SALARY_CHANGE_REASONS.filter((r) => r !== 'HIRE').join(', ')}` }),
+  }),
+});
+
+export const insightFilterSchema = z.object({
+  country: optional(countryCode),
+  department: optional(department),
+});
+
+export const breakdownQuerySchema = insightFilterSchema.extend({
+  by: z.enum(BREAKDOWN_DIMENSIONS),
+});
+
+export const benchmarkQuerySchema = z.object({
+  country: countryCode,
+  jobTitle,
+  salary: optional(z.coerce.number().int().positive()),
+});
+
+export const idParamSchema = z.object({ id: z.coerce.number().int().positive('Invalid id') });
+
+/** Parses input or throws a ValidationError whose details map field -> messages. */
+export function parse<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
+  const result = schema.safeParse(input);
+  if (!result.success) {
+    const flat = result.error.flatten();
+    const first = flat.formErrors[0] ?? Object.values(flat.fieldErrors).flat()[0] ?? 'Invalid request';
+    throw new ValidationError(String(first), { fieldErrors: flat.fieldErrors, formErrors: flat.formErrors });
+  }
+  return result.data;
+}
