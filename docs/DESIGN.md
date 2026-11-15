@@ -108,9 +108,45 @@ guarantees every change has a date and a reason.
 | Strings for department / job title | Lookup tables | Fewer joins and simpler forms; values validated against an allow-list in the API. Would normalise when HR needs to rename titles in bulk. |
 | No auth | Basic auth / SSO | Out of scope (see requirements); top of the production-hardening list. |
 
+## Frontend choices
+* **Tailwind CSS + a handful of in-repo primitives** (`card`, `btn-*`, `input`, `Field`) instead of a heavy
+  component library: the UI needs tables, forms, selects and charts — not worth 300 kB of widgets. Primitives
+  live in `globals.css` as Tailwind `@utility` classes so styling stays consistent.
+* **Recharts** for the two charts. Both are single-series (one hue, no legend), bars ≤ 24 px with rounded data
+  ends, per-bar hover tooltips, and every chart has a table view with the exact numbers.
+* **No client data-fetching library.** Reads happen in Server Components; mutations call the API and
+  `router.refresh()` re-renders the server tree. Fewer moving parts, no cache invalidation bugs.
+
+## Testing strategy
+| Layer | Tool | What it proves | Speed |
+|---|---|---|---|
+| Domain + services | Vitest, in-memory fake repos | business rules (salary change rules, compa-ratio, histogram shaping, validation of dept/title, email uniqueness) | ~50 ms |
+| HTTP | Supertest on the real Express app wired with fakes | validation, status codes, error format, PATCH can't change salary | ~250 ms |
+| Seed generator | Vitest | determinism, uniqueness, history consistency for 2,000 generated employees | ~300 ms |
+| Repositories (SQL) | Vitest against Postgres in an isolated `integration_test` schema | percentile/aggregate SQL, cross-currency USD maths, optimistic concurrency, unique violations | ~1 s |
+| Frontend | Vitest + Testing Library (jsdom, TZ pinned) | formatting, URL helpers, forms (dept-scoped titles, client validation, API error display), band placement | ~2 s |
+
+Unit suites need no database and no network, so they are deterministic and run on every save.
+Backend unit coverage: **98.7 % lines** (Prisma adapters are covered by the integration suite instead).
+
 ## Performance considerations
 * All list and insight queries are bounded: pagination (max 100 rows) or `GROUP BY` results (≤ ~50 groups).
 * Filter columns are indexed; search uses `ILIKE` on a handful of columns — fine at 10k rows
   (sequential scan on 10k rows is ~ms). At 1M rows we'd add a `pg_trgm` GIN index.
 * Seed inserts with `createMany` in batches of 1,000 rows: 10k employees + ~25k history rows in seconds.
 * Server Components fetch on the server, so the browser receives HTML, not JSON + a waterfall of requests.
+* Salary changes use **optimistic concurrency** (`UPDATE … WHERE salary = <value we validated>`), so two HR
+  users editing the same person can't silently overwrite each other.
+
+**Measured** (10,000 employees, ~23,600 history rows, local Docker Postgres, avg of 5 requests):
+
+| Endpoint | Avg |
+|---|---|
+| `GET /employees?pageSize=100&sort=salary` | 17 ms |
+| `GET /employees?search=sharma&country=IN` | 19 ms |
+| `GET /employees?page=399` (deep offset) | 22 ms |
+| `GET /insights/summary` | 13 ms |
+| `GET /insights/breakdown?by=jobTitle` | 30 ms |
+| `GET /insights/distribution` | 12 ms |
+| `GET /insights/benchmark` | 8 ms |
+| Seeding 10k employees + history | ~4 s |

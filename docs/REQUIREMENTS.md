@@ -34,6 +34,7 @@ Needs speed, correctness and confidence that a change is recorded. Single truste
 | **Live FX rates** | Rates stored in a table (easy to update). Live feeds add an external dependency and make reports non-reproducible; finance usually fixes a budget rate anyway. |
 | **Approval workflows** for salary changes | Requires multiple roles (manager, finance). Out of scope with a single persona; the history table is the foundation for it. |
 | **Org chart / reporting lines, performance reviews** | Not needed to answer pay questions in v1. |
+| **Relocations (changing an employee's country)** | Country determines pay currency, so a move is a salary event (new currency, new amount), not a profile edit. Needs its own flow; v1 blocks country edits rather than silently mixing currencies in history. |
 | **Soft delete / full audit log of every field** | Salary changes (the sensitive part) are historised; other fields are plain updates. Kept simple deliberately. |
 
 ## Non-functional requirements
